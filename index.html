@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Pink Christmas Magic</title>
     <style>
         body { margin: 0; overflow: hidden; background: #200515; font-family: -apple-system, sans-serif; touch-action: none; }
@@ -29,10 +28,10 @@
     <div id="container">
         <div id="yt-player"></div>
         <div id="ui-layer">
-            <h1 id="main-title">LAST CHRISTMAS<br>PINK MAGIC</h1>
-            <div id="status">✨ Waiting for Magic...</div>
+            <h1 id="main-title">CHRISTMAS GIFT FOR DONG<br>PINK MAGIC</h1>
+            <div id="status">✨ Memory initializing...</div>
             <div class="controls">
-                <button id="start-btn">开启魔法 & 播放 Wham!</button>
+                <button id="start-btn">请打开你的圣诞礼物吧小猪!</button>
                 <div id="action-btns" style="display:none; flex-direction: column; gap: 12px; width: 100%;">
                     <label class="upload-btn" for="file-input">➕ 添加记忆</label>
                     <button id="clear-btn">🗑️ 一键清空所有照片</button>
@@ -59,12 +58,21 @@
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
+        const dbName = "DongXmasMemoryDB";
+        let db;
+        const dbRequest = indexedDB.open(dbName, 1);
+        dbRequest.onupgradeneeded = (e) => { e.target.result.createObjectStore("photos", { autoIncrement: true }); };
+        dbRequest.onsuccess = (e) => { db = e.target.result; statusEl.innerText = "✨ Memory Ready!"; };
+
+        function saveToDB(base64) {
+            const tx = db.transaction("photos", "readwrite");
+            tx.objectStore("photos").add(base64);
+        }
+
         function onYouTubeIframeAPIReady() {
             ytPlayer = new YT.Player('yt-player', {
-                height: '0', width: '0',
-                videoId: 'E8gmARGvPlI',
-                playerVars: { 'autoplay': 0, 'loop': 1, 'playlist': 'E8gmARGvPlI' },
-                events: { 'onReady': () => console.log("Music Ready") }
+                height: '0', width: '0', videoId: 'E8gmARGvPlI',
+                playerVars: { 'autoplay': 0, 'loop': 1, 'playlist': 'E8gmARGvPlI' }
             });
         }
 
@@ -105,6 +113,19 @@
             scene.add(photoBall);
             scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
+            const loader = new THREE.TextureLoader();
+            if(db){
+                const tx = db.transaction("photos", "readonly");
+                tx.objectStore("photos").getAll().onsuccess = (e) => {
+                    e.target.result.forEach(b64 => {
+                        loader.load(b64, (tex) => {
+                            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3*(tex.image.width/tex.image.height), 3), new THREE.MeshBasicMaterial({map:tex, side:2}));
+                            mesh.scale.set(0,0,0); mesh.userData.src = b64; photoBall.add(mesh);
+                        });
+                    });
+                };
+            }
+
             const handleInteract = (x, y) => {
                 if (!isGallery || isStillLife) return;
                 mouse.x = (x / window.innerWidth) * 2 - 1;
@@ -117,16 +138,16 @@
                     document.getElementById('iphone-canvas').classList.add('active');
                 }
             };
-
             window.addEventListener('mousedown', (e) => handleInteract(e.clientX, e.clientY));
             window.addEventListener('touchstart', (e) => handleInteract(e.touches[0].clientX, e.touches[0].clientY));
-            document.getElementById('back-btn').onclick = () => {
-                isStillLife = false; document.getElementById('iphone-canvas').classList.remove('active');
-            };
+            document.getElementById('back-btn').onclick = () => { isStillLife = false; document.getElementById('iphone-canvas').classList.remove('active'); };
             
             document.getElementById('clear-btn').onclick = () => {
+                const clearTx = db.transaction("photos", "readwrite");
+                clearTx.objectStore("photos").clear();
                 while(photoBall.children.length > 0) photoBall.remove(photoBall.children[0]);
                 toggleGallery(false);
+                statusEl.innerText = "🗑️ All Memories Cleared";
             };
             animate();
         }
@@ -160,17 +181,15 @@
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const b64 = event.target.result;
+                    saveToDB(b64);
                     loader.load(b64, (tex) => {
-                        const mesh = new THREE.Mesh(
-                            new THREE.PlaneGeometry(3 * (tex.image.width/tex.image.height), 3),
-                            new THREE.MeshBasicMaterial({map:tex, side:2})
-                        );
+                        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3*(tex.image.width/tex.image.height), 3), new THREE.MeshBasicMaterial({map:tex, side:2}));
                         mesh.scale.set(0,0,0); mesh.userData.src = b64; photoBall.add(mesh);
                     });
                 };
                 reader.readAsDataURL(f);
             });
-            statusEl.innerText = "Photos Added!";
+            statusEl.innerText = "✅ Photos Saved Locally!";
         };
 
         async function setupAI() {
@@ -182,11 +201,9 @@
             hands.onResults((res) => {
                 if (!res.multiHandLandmarks) return;
                 const lms = res.multiHandLandmarks;
-                if (lms.length === 2 && Math.hypot(lms[0][9].x - lms[1][9].x, lms[0][9].y - lms[1][9].y) < 0.1) toggleGallery(false);
+                if (lms.length === 2 && Math.hypot(lms[0][9].x-lms[1][9].x, lms[0][9].y-lms[1][9].y) < 0.1) toggleGallery(false);
                 lms.forEach((lm, i) => {
-                    if (res.multiHandedness[i].label === "Right" && isGallery && !isStillLife) {
-                        gsap.to(photoBall.rotation, { y: -(lm[9].x - 0.5) * Math.PI * 2, duration: 0.5 });
-                    }
+                    if (res.multiHandedness[i].label === "Right" && isGallery && !isStillLife) gsap.to(photoBall.rotation, { y: -(lm[9].x - 0.5) * Math.PI * 2, duration: 0.5 });
                     if (Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y) < 0.04) toggleGallery(true);
                 });
             });
@@ -199,9 +216,7 @@
             if (!isGallery) treeGroup.rotation.y += 0.003;
             if (snowParticles) {
                 const pos = snowParticles.geometry.attributes.position.array;
-                for(let i=1; i<pos.length; i+=3) {
-                    pos[i] -= 0.03; if (pos[i] < -12) pos[i] = 15;
-                }
+                for(let i=1; i<pos.length; i+=3) { pos[i] -= 0.03; if (pos[i] < -12) pos[i] = 15; }
                 snowParticles.geometry.attributes.position.needsUpdate = true;
             }
             renderer.render(scene, camera);
